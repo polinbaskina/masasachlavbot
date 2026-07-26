@@ -249,8 +249,8 @@ async def start_plain(message: Message):
 
     await message.answer(
         "Привет! Это бот пожеланий для выпускного 🎓\n\n"
-        "У меня нет твоей персональной ссылки активации — она выдаётся организатором "
-        "(обычно в общем чате класса). Найди свою строчку в списке и перейди по ссылке."
+        "Я тебя пока не узнаю — организатор ещё не добавил твой Telegram ID в список "
+        "выпускников. Напиши организатору, пусть добавит тебя, и попробуй /start ещё раз."
     )
 
 
@@ -258,7 +258,7 @@ async def start_plain(message: Message):
 async def myqr(message: Message):
     graduate = db.get_graduate_by_chat_id(message.from_user.id)
     if not graduate:
-        await message.answer("Ты ещё не активировал(а) свою персональную ссылку.")
+        await message.answer("Тебя пока нет в списке выпускников, или ты ещё не писал(а) мне /start. Уточни у организатора.")
         return
     await send_qr(message.from_user.id, graduate["guest_code"], graduate["name"])
 
@@ -267,7 +267,7 @@ async def myqr(message: Message):
 async def letters(message: Message):
     graduate = db.get_graduate_by_chat_id(message.from_user.id)
     if not graduate:
-        await message.answer("Ты ещё не активировал(а) свою персональную ссылку.")
+        await message.answer("Тебя пока нет в списке выпускников, или ты ещё не писал(а) мне /start. Уточни у организатора.")
         return
 
     msgs = db.get_messages_for_graduate(graduate["id"])
@@ -287,6 +287,46 @@ async def letters(message: Message):
 
 
 # ---------- Admin: bulk pre-registration ----------
+
+@dp.message(Command("remove"))
+async def remove_graduate(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "Пришли имя или Telegram ID того, кого нужно удалить, например:\n"
+            "/remove Иванов Иван\nили\n/remove 137093440"
+        )
+        return
+
+    query = parts[1].strip()
+
+    if query.isdigit():
+        graduate = db.get_graduate_by_telegram_id(int(query))
+        if not graduate:
+            await message.answer(f"Не нахожу выпускника с ID {query}.")
+            return
+        db.delete_graduate(graduate["id"])
+        await message.answer(f"Удалено: {graduate['name']} (ID {query}).")
+        return
+
+    matches = db.find_graduates_by_name(query)
+    if not matches:
+        await message.answer(f"Не нахожу «{query}» в списке.")
+        return
+    if len(matches) > 1:
+        lines = "\n".join(f"— {m['name']} (ID: {m['chat_id'] or 'ещё не активирован'})" for m in matches)
+        await message.answer(
+            f"Нашлось несколько совпадений, уточни через ID:\n{lines}"
+        )
+        return
+
+    graduate = matches[0]
+    db.delete_graduate(graduate["id"])
+    await message.answer(f"Удалено: {graduate['name']}.")
+
 
 @dp.message(Command("import_ids"))
 async def import_with_ids(message: Message):

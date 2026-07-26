@@ -101,7 +101,7 @@ def bulk_create_with_ids(pairs: list[tuple[str, int]]):
                 "INSERT INTO graduates (name, owner_code, guest_code, chat_id) VALUES (?, ?, ?, ?)",
                 (name, owner_code, guest_code, chat_id),
             )
-            created.append({"name": name, "chat_id": chat_id})
+            created.append({"name": name, "chat_id": chat_id, "guest_code": guest_code})
         conn.commit()
     return created, errors
 
@@ -194,6 +194,27 @@ def claim_by_name(name: str, chat_id: int):
         conn.commit()
         match = conn.execute("SELECT * FROM graduates WHERE id = ?", (match["id"],)).fetchone()
         return match, None
+
+
+def find_graduates_by_name(name: str):
+    """Case/space-insensitive substring search. Returns list of matching graduate rows."""
+    target = _normalize_name(name)
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM graduates").fetchall()
+    return [r for r in rows if target in _normalize_name(r["name"])]
+
+
+def get_graduate_by_telegram_id(chat_id: int):
+    return get_graduate_by_chat_id(chat_id)
+
+
+def delete_graduate(graduate_id: int):
+    """Deletes a graduate and any messages addressed to them. Returns True if a row was removed."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM messages WHERE graduate_id = ?", (graduate_id,))
+        cur = conn.execute("DELETE FROM graduates WHERE id = ?", (graduate_id,))
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def save_message(
