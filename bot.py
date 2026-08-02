@@ -44,25 +44,75 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-def build_qr(link: str) -> BufferedInputFile:
+from PIL import Image, ImageDraw, ImageFont
+
+FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "DejaVuSans-Bold.ttf")
+
+
+def _fit_font(text: str, max_width: int, max_size=32, min_size=14):
+    size = max_size
+    while size > min_size:
+        font = ImageFont.truetype(FONT_PATH, size)
+        bbox = font.getbbox(text)
+        if (bbox[2] - bbox[0]) <= max_width:
+            return font
+        size -= 2
+    return ImageFont.truetype(FONT_PATH, min_size)
+
+
+def _label_lines(label: str, max_width: int):
+    """Returns [(line_text, font, bbox), ...] — one line, or two if it doesn't fit at min size."""
+    font = _fit_font(label, max_width)
+    bbox = font.getbbox(label)
+    if (bbox[2] - bbox[0]) <= max_width:
+        return [(label, font, bbox)]
+
+    words = label.split()
+    mid = max(1, len(words) // 2)
+    lines = [" ".join(words[:mid]), " ".join(words[mid:])] if len(words) > 1 else [label]
+    result = []
+    for line in lines:
+        f = _fit_font(line, max_width)
+        result.append((line, f, f.getbbox(line)))
+    return result
+
+
+def build_qr_png_bytes(link: str, label: str) -> bytes:
+    """QR code with the person's name printed underneath, ready for printing on badges."""
     qr = qrcode.QRCode(box_size=10, border=2)
     qr.add_data(link)
     qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return BufferedInputFile(buf.read(), filename="qr.png")
+    qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
 
+    padding = 20
+    max_text_width = qr_img.width - padding * 2
+    lines = _label_lines(label.strip(), max_text_width)
+    line_gap = 8
 
-def build_qr_bytes(link: str) -> bytes:
-    qr = qrcode.QRCode(box_size=10, border=2)
-    qr.add_data(link)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
+    line_heights = [(bbox[3] - bbox[1]) for _, _, bbox in lines]
+    text_block_height = sum(line_heights) + line_gap * (len(lines) - 1)
+
+    canvas = Image.new(
+        "RGB", (qr_img.width, qr_img.height + text_block_height + padding * 2), "white"
+    )
+    canvas.paste(qr_img, (0, 0))
+    draw = ImageDraw.Draw(canvas)
+
+    y = qr_img.height + padding
+    for line, font, bbox in lines:
+        w = bbox[2] - bbox[0]
+        x = (qr_img.width - w) // 2
+        draw.text((x, y), line, font=font, fill="black")
+        y += (bbox[3] - bbox[1]) + line_gap
+
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    canvas.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def build_qr(link: str, label: str) -> BufferedInputFile:
+    png_bytes = build_qr_png_bytes(link, label)
+    return BufferedInputFile(png_bytes, filename="qr.png")
 
 
 def _safe_filename(name: str) -> str:
@@ -72,13 +122,13 @@ def _safe_filename(name: str) -> str:
 
 def build_qr_zip(graduates) -> bytes:
     """graduates: iterable of dicts/rows with 'name' and 'guest_code'. Returns a zip file's
-    bytes, one PNG per person, named after them, ready for printing on badges/diplomas."""
+    bytes, one PNG per person (QR + printed name), named after them, ready for printing."""
     zip_buf = io.BytesIO()
     used_names = set()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for g in graduates:
             link = guest_link(g["guest_code"])
-            png_bytes = build_qr_bytes(link)
+            png_bytes = build_qr_png_bytes(link, g["name"])
             base = _safe_filename(g["name"])
             filename = base
             i = 2
@@ -101,7 +151,7 @@ def owner_link(owner_code: str) -> str:
 
 async def send_qr(chat_id: int, guest_code: str, name: str):
     link = guest_link(guest_code)
-    qr_file = build_qr(link)
+    qr_file = build_qr(link, name)
     await bot.send_photo(
         chat_id,
         qr_file,
