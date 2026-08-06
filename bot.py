@@ -338,6 +338,86 @@ async def letters(message: Message):
 
 # ---------- Admin: bulk pre-registration ----------
 
+@dp.message(Command("qr_for"))
+async def qr_for(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(
+            "Пришли имя или Telegram ID, например:\n/qr_for Иванов Иван\nили\n/qr_for 137093440"
+        )
+        return
+
+    query = parts[1].strip()
+    if query.isdigit():
+        graduate = db.get_graduate_by_telegram_id(int(query))
+        if not graduate:
+            await message.answer(f"Не нахожу выпускника с ID {query}.")
+            return
+    else:
+        matches = db.find_graduates_by_name(query)
+        if not matches:
+            await message.answer(f"Не нахожу «{query}» в списке.")
+            return
+        if len(matches) > 1:
+            lines = "\n".join(
+                f"— {m['name']} (ID: {m['chat_id'] or 'ещё не активирован'})" for m in matches
+            )
+            await message.answer(f"Нашлось несколько совпадений, уточни через ID:\n{lines}")
+            return
+        graduate = matches[0]
+
+    link = guest_link(graduate["guest_code"])
+    qr_file = build_qr(link, graduate["name"])
+    await bot.send_photo(message.from_user.id, qr_file, caption=f"QR для «{graduate['name']}»")
+
+
+@dp.message(Command("rename"))
+async def rename_graduate(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+
+    raw = message.text.split("\n")
+    body = [line.strip() for line in raw[1:] if line.strip()]
+    if len(body) != 2:
+        await message.answer(
+            "Пришли команду, старое имя (или Telegram ID), и новое имя — каждое с новой строки:\n\n"
+            "/rename\nИванов Иван\nИванов Иван Петрович"
+        )
+        return
+
+    query, new_name = body
+
+    if query.isdigit():
+        graduate = db.get_graduate_by_telegram_id(int(query))
+        if not graduate:
+            await message.answer(f"Не нахожу выпускника с ID {query}.")
+            return
+    else:
+        matches = db.find_graduates_by_name(query)
+        if not matches:
+            await message.answer(f"Не нахожу «{query}» в списке.")
+            return
+        if len(matches) > 1:
+            lines = "\n".join(
+                f"— {m['name']} (ID: {m['chat_id'] or 'ещё не активирован'})" for m in matches
+            )
+            await message.answer(f"Нашлось несколько совпадений, уточни через ID:\n{lines}")
+            return
+        graduate = matches[0]
+
+    old_name = graduate["name"]
+    updated = db.rename_graduate(graduate["id"], new_name)
+    await message.answer(
+        f"Готово: «{old_name}» → «{updated['name']}».\n\n"
+        f"Учти: если QR на эту фамилию уже распечатан, на нём останется старое имя. "
+        f"Свежую картинку с новым именем можно получить командой:\n"
+        f"/qr_for {updated['name']}"
+    )
+
+
 @dp.message(Command("remove"))
 async def remove_graduate(message: Message):
     if not is_admin(message.from_user.id):

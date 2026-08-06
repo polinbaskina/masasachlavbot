@@ -217,6 +217,13 @@ def delete_graduate(graduate_id: int):
         return cur.rowcount > 0
 
 
+def rename_graduate(graduate_id: int, new_name: str):
+    with get_conn() as conn:
+        conn.execute("UPDATE graduates SET name = ? WHERE id = ?", (new_name.strip(), graduate_id))
+        conn.commit()
+        return conn.execute("SELECT * FROM graduates WHERE id = ?", (graduate_id,)).fetchone()
+
+
 def save_message(
     graduate_id: int,
     sender_chat_id: int,
